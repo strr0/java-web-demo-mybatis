@@ -3,6 +3,8 @@ package com.example.demo.config.mybatis.util;
 import com.example.demo.config.mybatis.annotation.Column;
 import com.example.demo.config.mybatis.annotation.Id;
 import com.example.demo.config.mybatis.annotation.Table;
+import com.example.demo.config.mybatis.exception.BuilderException;
+import com.example.demo.config.mybatis.exception.KeyNotFoundException;
 
 import java.lang.reflect.Field;
 
@@ -46,6 +48,25 @@ public class EntityUtil {
      * @return
      */
     public static boolean hasKey(Field[] fields) {
-        return fields.length > 0 && fields[0].isAnnotationPresent(Id.class);
+        for (Field field : fields) {
+            if (field.isAnnotationPresent(Id.class)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 获取主键
+     * @param fields
+     * @return
+     */
+    public static Field getKey(Field[] fields) throws KeyNotFoundException {
+        for (Field field : fields) {
+            if (field.isAnnotationPresent(Id.class)) {
+                return field;
+            }
+        }
+        throw new KeyNotFoundException();
     }
 }
