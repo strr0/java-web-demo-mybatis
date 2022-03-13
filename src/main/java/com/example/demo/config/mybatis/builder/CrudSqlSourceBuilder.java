@@ -1,7 +1,9 @@
 package com.example.demo.config.mybatis.builder;
 
 import com.example.demo.config.mybatis.exception.BuilderException;
+import com.example.demo.config.mybatis.exception.KeyNotFoundException;
 import com.example.demo.config.mybatis.util.EntityUtil;
+import org.apache.ibatis.jdbc.SQL;
 import org.apache.ibatis.mapping.SqlSource;
 import org.apache.ibatis.scripting.defaults.RawSqlSource;
 import org.apache.ibatis.scripting.xmltags.*;
@@ -21,107 +23,110 @@ public class CrudSqlSourceBuilder {
 
     public SqlSource countByParamSqlSource(Class<?> clazz) {
         String table = EntityUtil.getTable(clazz);
-        SqlNode sqlNode = new StaticTextSqlNode("select count(1) from " + table);
+        SqlNode sqlNode = new StaticTextSqlNode(countSql(table).toString());
         return new DynamicSqlSource(configuration, new MixedSqlNode(Arrays.asList(sqlNode, applyWhere(clazz.getDeclaredFields()))));
     }
 
     public SqlSource listByParamSqlSource(Class<?> clazz) {
         String table = EntityUtil.getTable(clazz);
         Field[] fields = clazz.getDeclaredFields();
-        SqlNode sqlNode = new StaticTextSqlNode(String.format("select %s from %s", buildColumns(fields, true), table));
+        SqlNode sqlNode = new StaticTextSqlNode(listSql(table, fields).toString());
         return new DynamicSqlSource(configuration, new MixedSqlNode(Arrays.asList(sqlNode, applyWhere(fields))));
     }
 
     public SqlSource saveSqlSource(Class<?> clazz) {
         String table = EntityUtil.getTable(clazz);
         Field[] fields = clazz.getDeclaredFields();
-        SqlNode sqlNode = new StaticTextSqlNode(String.format("insert into %s(%s) values(%s)", table, buildColumns(fields, false), buildSaveParam(fields)));
+        SqlNode sqlNode = new StaticTextSqlNode(saveSql(table, fields).toString());
         return new RawSqlSource(configuration, sqlNode, clazz);
     }
 
     public SqlSource updateSqlSource(Class<?> clazz) throws BuilderException {
-        Field[] fields = clazz.getDeclaredFields();
-        // 主键
-        Field key = EntityUtil.getKey(fields);
-        String keyProperty = key.getName();
-        String keyColumn = EntityUtil.getColumn(key);
         String table = EntityUtil.getTable(clazz);
-        SqlNode sqlNode = new StaticTextSqlNode(String.format("update %s set %s where %s = #{%s}", table, buildUpdateParam(fields), keyColumn, keyProperty));
+        Field[] fields = clazz.getDeclaredFields();
+        SqlNode sqlNode = new StaticTextSqlNode(updateSql(table, fields).toString());
         return new RawSqlSource(configuration, sqlNode, clazz);
     }
 
     public SqlSource removeSqlSource(Class<?> clazz) throws BuilderException {
-        Field[] fields = clazz.getDeclaredFields();
-        // 主键
-        Field key = EntityUtil.getKey(fields);
-        String keyProperty = key.getName();
-        String keyColumn = EntityUtil.getColumn(key);
         String table = EntityUtil.getTable(clazz);
-        SqlNode sqlNode = new StaticTextSqlNode(String.format("delete from %s where %s = #{%s}", table, keyColumn, keyProperty));
+        Field[] fields = clazz.getDeclaredFields();
+        SqlNode sqlNode = new StaticTextSqlNode(removeSql(table, fields).toString());
         return new RawSqlSource(configuration, sqlNode, clazz);
     }
 
     public SqlSource getSqlSource(Class<?> clazz) throws BuilderException {
-        Field[] fields = clazz.getDeclaredFields();
-        // 主键
-        Field key = EntityUtil.getKey(fields);
-        String keyProperty = key.getName();
-        String keyColumn = EntityUtil.getColumn(key);
         String table = EntityUtil.getTable(clazz);
-        SqlNode sqlNode = new StaticTextSqlNode(String.format("select %s from %s where %s = #{%s}", buildColumns(fields, true), table, keyColumn, keyProperty));
+        Field[] fields = clazz.getDeclaredFields();
+        SqlNode sqlNode = new StaticTextSqlNode(getSql(table, fields).toString());
         return new RawSqlSource(configuration, sqlNode, clazz);
     }
 
-    /**
-     * 构建参数
-     * @param fields
-     * @return
-     */
-    private String buildColumns(Field[] fields, boolean withKey) {
-        List<String> columns = new ArrayList<>();
-        for (Field field : fields) {
-            // 主键
-            if (!withKey && EntityUtil.isKey(field)) {
-                continue;
-            }
-            String column = EntityUtil.getColumn(field);
-            columns.add(column);
-        }
-        return String.join(", ", columns);
+    private SQL countSql(String table) {
+        SQL sql = new SQL();
+        sql.SELECT("count(1)");
+        sql.FROM(table);
+        return sql;
     }
 
-    /**
-     * 构建保存参数
-     * @param fields
-     * @return
-     */
-    private String buildSaveParam(Field[] fields) {
-        List<String> param = new ArrayList<>();
+    private SQL listSql(String table, Field[] fields) {
+        SQL sql = new SQL();
+        for (Field field : fields) {
+            sql.SELECT(EntityUtil.getColumn(field));
+        }
+        sql.FROM(table);
+        return sql;
+    }
+
+    private SQL saveSql(String table, Field[] fields) {
+        SQL sql = new SQL();
+        sql.INSERT_INTO(table);
         for (Field field : fields) {
             if (EntityUtil.isKey(field)) {
                 continue;
             }
-            param.add(String.format("#{%s}", field.getName()));
+            sql.VALUES(EntityUtil.getColumn(field), String.format("#{%s}", field.getName()));
         }
-        return String.join(", ", param);
+        return sql;
     }
 
-    /**
-     * 构建修改参数
-     * @param fields
-     * @return
-     */
-    private String buildUpdateParam(Field[] fields) {
-        List<String> param = new ArrayList<>();
+    private SQL updateSql(String table, Field[] fields) throws KeyNotFoundException {
+        Field key = EntityUtil.getKey(fields);
+        String keyColumn = EntityUtil.getColumn(key);
+        String keyProperty = key.getName();
+        SQL sql = new SQL();
+        sql.UPDATE(table);
         for (Field field : fields) {
             if (EntityUtil.isKey(field)) {
                 continue;
             }
-            String property = field.getName();
-            String column = EntityUtil.getColumn(field);
-            param.add(String.format("%s = #{%s}", column, property));
+            sql.SET(String.format("%s = #{%s}", EntityUtil.getColumn(field), field.getName()));
         }
-        return String.join(", ", param);
+        sql.WHERE(String.format("%s = #{%s}", keyColumn, keyProperty));
+        return sql;
+    }
+
+    private SQL removeSql(String table, Field[] fields) throws KeyNotFoundException {
+        Field key = EntityUtil.getKey(fields);
+        String keyColumn = EntityUtil.getColumn(key);
+        String keyProperty = key.getName();
+        SQL sql = new SQL();
+        sql.DELETE_FROM(table);
+        sql.WHERE(String.format("%s = #{%s}", keyColumn, keyProperty));
+        return sql;
+    }
+
+    private SQL getSql(String table, Field[] fields) throws KeyNotFoundException {
+        Field key = EntityUtil.getKey(fields);
+        String keyColumn = EntityUtil.getColumn(key);
+        String keyProperty = key.getName();
+        SQL sql = new SQL();
+        for (Field field : fields) {
+            sql.SELECT(EntityUtil.getColumn(field));
+        }
+        sql.FROM(table);
+        sql.WHERE(String.format("%s = #{%s}", keyColumn, keyProperty));
+        return sql;
     }
 
     /**
